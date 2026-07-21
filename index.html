@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SDELKA — доска объявлений · демо</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <style>
   :root{
     --bg:#f5f6f8; --card:#ffffff; --ink:#1a1d23; --muted:#8a919e;
@@ -110,7 +112,20 @@
 
   footer{border-top:1px solid var(--line);background:#fff;padding:22px;text-align:center;font-size:12.5px;color:var(--muted)}
 
+  .view-toggle{display:flex;background:#fff;border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px}
+  .view-toggle button{padding:6px 14px;font-size:13px;border-radius:7px;color:var(--muted);font-weight:700}
+  .view-toggle button.on{background:var(--ink);color:#fff}
+  #mapWrap{display:none;height:480px;border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);margin-bottom:14px;position:relative;z-index:1}
+  #mapWrap.show{display:block}
+  #map{height:100%}
+  .pop-card{font-family:inherit;min-width:170px}
+  .pop-card .pp{font-weight:800;font-size:15px}
+  .pop-card .pt{font-size:12.5px;margin:3px 0 6px;line-height:1.3}
+  .pop-card button{background:var(--accent);color:#fff;border-radius:7px;padding:6px 10px;font-size:12px;font-weight:700;width:100%;cursor:pointer;border:none}
+  #pickMap{height:220px;border-radius:11px;overflow:hidden;border:1px solid var(--line)}
+
   @media (max-width:820px){
+    #mapWrap{height:380px}
     .filters{display:none}
     .gallery{grid-template-columns:1fr}
     .gallery .side{flex-direction:row;height:70px}
@@ -158,7 +173,12 @@
   </aside>
 
   <main class="content">
-    <div class="result-line"><h2 id="resTitle">Все объявления</h2><span id="resCount"></span></div>
+    <div class="result-line"><h2 id="resTitle">Все объявления</h2>
+      <div style="display:flex;align-items:center;gap:12px"><span id="resCount"></span>
+        <div class="view-toggle"><button id="btnList" class="on" onclick="setView(false)">Список</button><button id="btnMap" onclick="setView(true)">🗺️ Карта</button></div>
+      </div>
+    </div>
+    <div id="mapWrap"><div id="map"></div></div>
     <div class="grid" id="grid"></div>
     <div class="empty" id="empty" style="display:none"><div>🔍</div>Ничего не найдено — измените фильтры</div>
   </main>
@@ -178,14 +198,16 @@
   <div class="modal"><div class="modal-head"><h3>Новое объявление</h3><button class="close" onclick="closePost()">✕</button></div>
     <div class="modal-body">
       <div class="form-grid">
-        <div><label>Категория</label><select><option>Недвижимость</option><option>Транспорт</option><option>Электроника</option><option>Услуги</option><option>Работа</option></select></div>
-        <div><label>Заголовок</label><input placeholder="Например: Кондо 1BR у моря, Джомтьен"></div>
+        <div><label>Категория</label><select id="pCat"><option>Недвижимость</option><option>Транспорт</option><option>Электроника</option><option>Услуги</option><option>Работа</option></select></div>
+        <div><label>Заголовок</label><input id="pTitle" placeholder="Например: Кондо 1BR у моря, Джомтьен"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <div><label>Цена</label><input type="number" placeholder="0"></div>
-          <div><label>Город</label><select><option>Паттайя</option><option>Бангкок</option><option>Пхукет</option><option>Самуи</option></select></div>
+          <div><label>Цена</label><input id="pPrice" type="number" placeholder="0"></div>
+          <div><label>Город</label><select id="pCity" onchange="if(pickMap)pickMap.setView(CITY_LL[this.value],12)"><option>Паттайя</option><option>Бангкок</option><option>Пхукет</option><option>Самуи</option></select></div>
         </div>
-        <div><label>Описание</label><textarea placeholder="Расскажите о товаре или объекте…"></textarea></div>
+        <div><label>Описание</label><textarea id="pDesc" placeholder="Расскажите о товаре или объекте…"></textarea></div>
         <div><label>Фотографии</label><div class="upload" onclick="toast('Загрузка фото — в полной версии')">📷 Перетащите до 10 фото или нажмите</div></div>
+        <div><label>Локация — кликните по карте, чтобы поставить метку 📍</label><div id="pickMap"></div>
+          <div style="font-size:12px;color:var(--muted);margin-top:5px" id="pickHint">Метка не поставлена — возьмём центр выбранного города</div></div>
         <button class="cta green" onclick="submitPost()">Опубликовать</button>
         <div style="font-size:12px;color:var(--muted);text-align:center">Объявление пройдёт модерацию перед публикацией</div>
       </div>
@@ -203,19 +225,19 @@ const CATS=["Все","Недвижимость","Транспорт","Элект
 let activeCat="Все";
 
 // price in THB
-const L=[
- {id:1,cat:"Недвижимость",deal:"sale",title:"Кондо 1BR 35 м², The Base Central Pattaya, 12 этаж",price:3200000,city:"Паттайя",area:"Центр",em:"🏢",g:"linear-gradient(135deg,#89f7fe,#66a6ff)",top:1,ver:1,seller:{n:"Danita Property",t:"agency",deals:47},specs:{"Спальни":"1","Площадь":"35 м²","Этаж":"12/30","Право":"Foreign quota"},d:"Полностью меблированное кондо в центре Паттайи. Бассейн, фитнес, охрана 24/7. Иностранная квота, готово к передаче."},
- {id:2,cat:"Недвижимость",deal:"rent",title:"Вилла 3BR с бассейном, Восточная Паттайя — помесячно",price:65000,city:"Паттайя",area:"East Pattaya",em:"🏡",g:"linear-gradient(135deg,#a8e063,#56ab2f)",ver:1,seller:{n:"Виктория Р.",t:"private",deals:12},specs:{"Спальни":"3","Площадь":"180 м²","Бассейн":"Частный","Мин. срок":"6 мес"},d:"Приватная вилла с бассейном и садом. Тихий посёлок с охраной, 10 минут до Сукхумвита. Питомцы — по договорённости."},
- {id:3,cat:"Недвижимость",deal:"sale",title:"Кондо 2BR 68 м² Sea View, Пратамнак Хилл",price:6900000,city:"Паттайя",area:"Пратамнак",em:"🌅",g:"linear-gradient(135deg,#fbc2eb,#a6c1ee)",top:1,ver:1,seller:{n:"Danita Property",t:"agency",deals:47},specs:{"Спальни":"2","Площадь":"68 м²","Вид":"Море","Этаж":"18/25"},d:"Панорамный вид на залив, угловая планировка, две ванные. Дом 2022 года, инфраструктура «всё включено»."},
- {id:4,cat:"Недвижимость",deal:"rent",title:"Студия 26 м² у пляжа Джомтьен, от 3 месяцев",price:14000,city:"Паттайя",area:"Джомтьен",em:"🛋️",g:"linear-gradient(135deg,#ffecd2,#fcb69f)",seller:{n:"Сергей К.",t:"private",deals:5},specs:{"Тип":"Студия","Площадь":"26 м²","До моря":"300 м","Депозит":"1 мес"},d:"Уютная студия с балконом, 5 минут пешком до пляжа. Wi-Fi, стиральная машина на этаже, бассейн на крыше."},
- {id:5,cat:"Недвижимость",deal:"sale",title:"Таунхаус 2BR, Пхукет, Раваи — рассрочка от застройщика",price:4500000,city:"Пхукет",area:"Раваи",em:"🏘️",g:"linear-gradient(135deg,#d4fc79,#96e6a1)",ver:1,seller:{n:"Phuket Estate Co.",t:"agency",deals:31},specs:{"Спальни":"2","Площадь":"95 м²","Сдача":"Q2 2027","Рассрочка":"24 мес"},d:"Новый проект в 7 минутах от пляжа Раваи. Беспроцентная рассрочка на период строительства, гарантированная аренда 6%."},
- {id:6,cat:"Транспорт",deal:"sale",title:"Honda PCX 160, 2024, пробег 8 500 км",price:78000,city:"Паттайя",area:"Центр",em:"🛵",g:"linear-gradient(135deg,#e0c3fc,#8ec5fc)",ver:1,seller:{n:"Moto Market",t:"agency",deals:89},specs:{"Год":"2024","Пробег":"8 500 км","Объём":"160 см³","Документы":"Green book"},d:"Один владелец, обслуживание у дилера. Полный комплект документов, помощь с переоформлением."},
- {id:7,cat:"Транспорт",deal:"sale",title:"Toyota Yaris Cross Hybrid 2023, как новый",price:720000,city:"Бангкок",area:"Он Нут",em:"🚗",g:"linear-gradient(135deg,#f6d365,#fda085)",top:1,seller:{n:"Артём В.",t:"private",deals:3},specs:{"Год":"2023","Пробег":"22 000 км","Тип":"Гибрид","Страховка":"1 класс до 2027"},d:"Городской кроссовер в идеальном состоянии. Расход 4.2 л/100 км. Продажа в связи с переездом."},
- {id:8,cat:"Электроника",deal:"sale",title:"iPhone 16 Pro 256GB, Titanium — гарантия до 2027",price:38500,city:"Паттайя",area:"Центр",em:"📱",g:"linear-gradient(135deg,#cfd9df,#e2ebf0)",ver:1,seller:{n:"iStore Pattaya",t:"agency",deals:156},specs:{"Память":"256 GB","АКБ":"98%","Гарантия":"до 03.2027","Комплект":"Полный"},d:"Официальная гарантия, чек. Возможна проверка при встрече в магазине. Trade-in вашего устройства."},
- {id:9,cat:"Электроника",deal:"sale",title:"MacBook Air M3 13\" 16/512 — запечатан",price:41900,city:"Бангкок",em:"💻",area:"Сиам",g:"linear-gradient(135deg,#a1c4fd,#c2e9fb)",seller:{n:"Никита Т.",t:"private",deals:7},specs:{"Чип":"M3","RAM":"16 GB","SSD":"512 GB","Состояние":"Новый"},d:"Запечатанный, привезён из США. Цена ниже официальной розницы на 15%."},
- {id:10,cat:"Услуги",deal:"rent",title:"Трансфер Бангкок ↔ Паттайя, минивэн, рус. водитель",price:1800,city:"Паттайя",area:"—",em:"🚐",g:"linear-gradient(135deg,#84fab0,#8fd3f4)",ver:1,seller:{n:"VIP Transfer",t:"agency",deals:203},specs:{"Авто":"Toyota Commuter","Мест":"9","Wi-Fi":"Да","Оплата":"Нал / QR / крипта"},d:"Фиксированная цена, встреча с табличкой в аэропорту. Детские кресла бесплатно."},
- {id:11,cat:"Работа",deal:"rent",title:"Менеджер по продажам недвижимости (RU/EN), Паттайя",price:45000,city:"Паттайя",area:"Центр",em:"💼",g:"linear-gradient(135deg,#fccb90,#d57eeb)",ver:1,seller:{n:"Danita Property",t:"agency",deals:47},specs:{"Оклад":"45 000 ฿ + %","График":"5/2","Опыт":"от 1 года","Языки":"RU + EN"},d:"В команду агентства требуется менеджер. Оклад + процент со сделок, обучение, рабочая виза."},
- {id:12,cat:"Личные вещи",deal:"sale",title:"Монстера Thai Constellation, укоренённая, 4 листа",price:2900,city:"Бангкок",area:"Чатучак",em:"🪴",g:"linear-gradient(135deg,#96fbc4,#f9f586)",top:1,seller:{n:"Plant Lab TH",t:"agency",deals:64},specs:{"Вид":"Monstera","Сорт":"Thai Constellation","Листьев":"4","Фитодокументы":"Есть"},d:"Лабораторный клон с устойчивой вариегатностью. Оформляем фитосанитарный сертификат для вывоза."},
+const ADS=[
+ {id:1,ll:[12.9436,100.8888],cat:"Недвижимость",deal:"sale",title:"Кондо 1BR 35 м², The Base Central Pattaya, 12 этаж",price:3200000,city:"Паттайя",area:"Центр",em:"🏢",g:"linear-gradient(135deg,#89f7fe,#66a6ff)",top:1,ver:1,seller:{n:"Danita Property",t:"agency",deals:47},specs:{"Спальни":"1","Площадь":"35 м²","Этаж":"12/30","Право":"Foreign quota"},d:"Полностью меблированное кондо в центре Паттайи. Бассейн, фитнес, охрана 24/7. Иностранная квота, готово к передаче."},
+ {id:2,ll:[12.9330,100.9310],cat:"Недвижимость",deal:"rent",title:"Вилла 3BR с бассейном, Восточная Паттайя — помесячно",price:65000,city:"Паттайя",area:"East Pattaya",em:"🏡",g:"linear-gradient(135deg,#a8e063,#56ab2f)",ver:1,seller:{n:"Виктория Р.",t:"private",deals:12},specs:{"Спальни":"3","Площадь":"180 м²","Бассейн":"Частный","Мин. срок":"6 мес"},d:"Приватная вилла с бассейном и садом. Тихий посёлок с охраной, 10 минут до Сукхумвита. Питомцы — по договорённости."},
+ {id:3,ll:[12.9130,100.8650],cat:"Недвижимость",deal:"sale",title:"Кондо 2BR 68 м² Sea View, Пратамнак Хилл",price:6900000,city:"Паттайя",area:"Пратамнак",em:"🌅",g:"linear-gradient(135deg,#fbc2eb,#a6c1ee)",top:1,ver:1,seller:{n:"Danita Property",t:"agency",deals:47},specs:{"Спальни":"2","Площадь":"68 м²","Вид":"Море","Этаж":"18/25"},d:"Панорамный вид на залив, угловая планировка, две ванные. Дом 2022 года, инфраструктура «всё включено»."},
+ {id:4,ll:[12.8890,100.8770],cat:"Недвижимость",deal:"rent",title:"Студия 26 м² у пляжа Джомтьен, от 3 месяцев",price:14000,city:"Паттайя",area:"Джомтьен",em:"🛋️",g:"linear-gradient(135deg,#ffecd2,#fcb69f)",seller:{n:"Сергей К.",t:"private",deals:5},specs:{"Тип":"Студия","Площадь":"26 м²","До моря":"300 м","Депозит":"1 мес"},d:"Уютная студия с балконом, 5 минут пешком до пляжа. Wi-Fi, стиральная машина на этаже, бассейн на крыше."},
+ {id:5,ll:[7.7780,98.3280],cat:"Недвижимость",deal:"sale",title:"Таунхаус 2BR, Пхукет, Раваи — рассрочка от застройщика",price:4500000,city:"Пхукет",area:"Раваи",em:"🏘️",g:"linear-gradient(135deg,#d4fc79,#96e6a1)",ver:1,seller:{n:"Phuket Estate Co.",t:"agency",deals:31},specs:{"Спальни":"2","Площадь":"95 м²","Сдача":"Q2 2027","Рассрочка":"24 мес"},d:"Новый проект в 7 минутах от пляжа Раваи. Беспроцентная рассрочка на период строительства, гарантированная аренда 6%."},
+ {id:6,ll:[12.9500,100.8900],cat:"Транспорт",deal:"sale",title:"Honda PCX 160, 2024, пробег 8 500 км",price:78000,city:"Паттайя",area:"Центр",em:"🛵",g:"linear-gradient(135deg,#e0c3fc,#8ec5fc)",ver:1,seller:{n:"Moto Market",t:"agency",deals:89},specs:{"Год":"2024","Пробег":"8 500 км","Объём":"160 см³","Документы":"Green book"},d:"Один владелец, обслуживание у дилера. Полный комплект документов, помощь с переоформлением."},
+ {id:7,ll:[13.7055,100.6010],cat:"Транспорт",deal:"sale",title:"Toyota Yaris Cross Hybrid 2023, как новый",price:720000,city:"Бангкок",area:"Он Нут",em:"🚗",g:"linear-gradient(135deg,#f6d365,#fda085)",top:1,seller:{n:"Артём В.",t:"private",deals:3},specs:{"Год":"2023","Пробег":"22 000 км","Тип":"Гибрид","Страховка":"1 класс до 2027"},d:"Городской кроссовер в идеальном состоянии. Расход 4.2 л/100 км. Продажа в связи с переездом."},
+ {id:8,ll:[12.9360,100.8890],cat:"Электроника",deal:"sale",title:"iPhone 16 Pro 256GB, Titanium — гарантия до 2027",price:38500,city:"Паттайя",area:"Центр",em:"📱",g:"linear-gradient(135deg,#cfd9df,#e2ebf0)",ver:1,seller:{n:"iStore Pattaya",t:"agency",deals:156},specs:{"Память":"256 GB","АКБ":"98%","Гарантия":"до 03.2027","Комплект":"Полный"},d:"Официальная гарантия, чек. Возможна проверка при встрече в магазине. Trade-in вашего устройства."},
+ {id:9,ll:[13.7460,100.5340],cat:"Электроника",deal:"sale",title:"MacBook Air M3 13\" 16/512 — запечатан",price:41900,city:"Бангкок",em:"💻",area:"Сиам",g:"linear-gradient(135deg,#a1c4fd,#c2e9fb)",seller:{n:"Никита Т.",t:"private",deals:7},specs:{"Чип":"M3","RAM":"16 GB","SSD":"512 GB","Состояние":"Новый"},d:"Запечатанный, привезён из США. Цена ниже официальной розницы на 15%."},
+ {id:10,ll:[12.9280,100.8830],cat:"Услуги",deal:"rent",title:"Трансфер Бангкок ↔ Паттайя, минивэн, рус. водитель",price:1800,city:"Паттайя",area:"—",em:"🚐",g:"linear-gradient(135deg,#84fab0,#8fd3f4)",ver:1,seller:{n:"VIP Transfer",t:"agency",deals:203},specs:{"Авто":"Toyota Commuter","Мест":"9","Wi-Fi":"Да","Оплата":"Нал / QR / крипта"},d:"Фиксированная цена, встреча с табличкой в аэропорту. Детские кресла бесплатно."},
+ {id:11,ll:[12.9400,100.8870],cat:"Работа",deal:"rent",title:"Менеджер по продажам недвижимости (RU/EN), Паттайя",price:45000,city:"Паттайя",area:"Центр",em:"💼",g:"linear-gradient(135deg,#fccb90,#d57eeb)",ver:1,seller:{n:"Danita Property",t:"agency",deals:47},specs:{"Оклад":"45 000 ฿ + %","График":"5/2","Опыт":"от 1 года","Языки":"RU + EN"},d:"В команду агентства требуется менеджер. Оклад + процент со сделок, обучение, рабочая виза."},
+ {id:12,ll:[13.7990,100.5500],cat:"Личные вещи",deal:"sale",title:"Монстера Thai Constellation, укоренённая, 4 листа",price:2900,city:"Бангкок",area:"Чатучак",em:"🪴",g:"linear-gradient(135deg,#96fbc4,#f9f586)",top:1,seller:{n:"Plant Lab TH",t:"agency",deals:64},specs:{"Вид":"Monstera","Сорт":"Thai Constellation","Листьев":"4","Фитодокументы":"Есть"},d:"Лабораторный клон с устойчивой вариегатностью. Оформляем фитосанитарный сертификат для вывоза."},
 ];
 
 const favs=new Set();
@@ -245,7 +267,7 @@ function filtered(){
   const max=+document.getElementById('fMax').value||Infinity;
   const deal=document.getElementById('fDeal').value;
   const st=document.getElementById('fSeller').value;
-  return L.filter(x=>
+  return ADS.filter(x=>
     (activeCat==="Все"||x.cat===activeCat)&&
     (!q||x.title.toLowerCase().includes(q)||x.cat.toLowerCase().includes(q))&&
     (!city||x.city===city)&&
@@ -272,6 +294,7 @@ function render(){
     </div>`).join('');
   const fc=document.getElementById('favCount');
   fc.style.display=favs.size?'block':'none';fc.textContent=favs.size;
+  if(mapMode)updateMarkers();
 }
 function fav(id,el){favs.has(id)?favs.delete(id):favs.add(id);render();}
 function resetFilters(){['fCity','fDeal','fSeller'].forEach(i=>document.getElementById(i).value='');
@@ -280,7 +303,7 @@ function resetFilters(){['fCity','fDeal','fSeller'].forEach(i=>document.getEleme
 
 // ---------- view modal ----------
 function openView(id){
-  const x=L.find(i=>i.id===id);
+  const x=ADS.find(i=>i.id===id);
   document.getElementById('vTitle').textContent=x.cat;
   document.getElementById('vBody').innerHTML=`
     <div class="gallery">
@@ -305,9 +328,63 @@ function openView(id){
   document.getElementById('viewBg').classList.add('open');
 }
 function closeView(){document.getElementById('viewBg').classList.remove('open')}
-function openPost(){document.getElementById('postBg').classList.add('open')}
+// ---------- map ----------
+const CITY_LL={"Паттайя":[12.936,100.889],"Бангкок":[13.746,100.534],"Пхукет":[7.890,98.398],"Самуи":[9.512,100.014]};
+let map=null,markers=null,mapMode=false;
+function setView(m){
+  mapMode=m;
+  document.getElementById('btnList').classList.toggle('on',!m);
+  document.getElementById('btnMap').classList.toggle('on',m);
+  document.getElementById('mapWrap').classList.toggle('show',m);
+  document.getElementById('grid').style.display=m?'none':'grid';
+  if(m&&!map){
+    map=L.map('map');
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
+    markers=L.layerGroup().addTo(map);
+  }
+  if(m){updateMarkers();setTimeout(()=>map.invalidateSize(),60);}
+}
+function updateMarkers(){
+  if(!map)return;
+  markers.clearLayers();
+  const items=filtered().filter(x=>x.ll);
+  items.forEach(x=>{
+    L.marker(x.ll).addTo(markers).bindPopup(
+      `<div class="pop-card"><div class="pp">${money(x.price)}${x.deal==='rent'?' /мес':''}</div>`+
+      `<div class="pt">${x.title}</div><button onclick="openView(${x.id})">Открыть объявление</button></div>`);
+  });
+  if(items.length)map.fitBounds(L.latLngBounds(items.map(x=>x.ll)).pad(0.25));
+}
+
+// ---------- post with location pick ----------
+let pickMap=null,pickMarker=null,pickLL=null;
+function openPost(){
+  document.getElementById('postBg').classList.add('open');
+  setTimeout(()=>{
+    if(!pickMap){
+      pickMap=L.map('pickMap').setView(CITY_LL[document.getElementById('pCity').value],12);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(pickMap);
+      pickMap.on('click',e=>{
+        pickLL=[e.latlng.lat,e.latlng.lng];
+        if(pickMarker)pickMarker.setLatLng(e.latlng);else pickMarker=L.marker(e.latlng).addTo(pickMap);
+        document.getElementById('pickHint').textContent='📍 Метка поставлена: '+e.latlng.lat.toFixed(4)+', '+e.latlng.lng.toFixed(4);
+      });
+    } else pickMap.invalidateSize();
+  },80);
+}
 function closePost(){document.getElementById('postBg').classList.remove('open')}
-function submitPost(){closePost();toast('✅ Объявление отправлено на модерацию (демо)')}
+function submitPost(){
+  const title=document.getElementById('pTitle').value.trim();
+  const price=+document.getElementById('pPrice').value||0;
+  const city=document.getElementById('pCity').value;
+  if(title&&price){
+    ADS.unshift({id:Date.now(),cat:document.getElementById('pCat').value,deal:'sale',title,price,city,area:'',
+      em:'🆕',g:'linear-gradient(135deg,#f5f7fa,#c3cfe2)',ll:pickLL||CITY_LL[city],
+      seller:{n:'Вы (демо)',t:'private',deals:0},specs:{'Статус':'На модерации (демо)'},
+      d:document.getElementById('pDesc').value||'Описание появится после модерации.'});
+    closePost();toast('✅ Объявление добавлено — оно уже в списке и на карте 📍');render();
+  } else {closePost();toast('✅ Отправлено на модерацию (демо)');}
+}
 
 let tt;
 function toast(msg){
